@@ -10,64 +10,54 @@ const KpFolder = struct {
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
-//    const allocator = init.gpa;
+    const allocator = init.gpa;
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len != 2) {
-        std.debug.print("Usage: {s} <directory>\n", .{args[0]});
+    if (args.len != 3) {
+        std.debug.print("Usage: {s} <database> <sequence.fa>\n", .{args[0]});
         return;
     }
 
-    const directory = args[1];
-    const cwd = std.Io.Dir.cwd();
-    const dir = cwd.openDir(io, directory, .{ .iterate = true }) catch |err| {
-        return err;
-    };
-    var it = dir.iterate();
-    while (try it.next(io)) |entry| {
-        switch (entry.kind) {
-            .file => {
-                const start = std.mem.startsWith(u8, entry.name, "pTAN");
-                const end = std.mem.endsWith(u8, entry.name, ".fa");
-                const length = (entry.name.len == 10);
-                if (start and end and length) {
-                    std.debug.print("{s}\n{s}\n", .{entry.name, @tagName(entry.kind)});
-                    }
-            },
-            .directory => {
-                const start = std.mem.startsWith(u8, entry.name, "pTAN");
-                if (start) {
-                    const answer = try hasExpectedFile(io, directory, entry.name);
-                    if (!answer){
-                        std.debug.print("Directory: {s}\n", .{entry.name});
-                        std.debug.print("Does not have expected file.\n", .{});
-                    }
-                }
-            },
-            else => { continue; },
-        }
-    }
-}
+    const argv1 = [_][]const u8{ "blastp", "-query", args[2], "-db", args[1], "-outfmt", "5", "-out", "-"};
 
-fn hasExpectedFile(io: Io, directory: []const u8, folder: []const u8) !bool {
-    var buff: [1024]u8 = undefined;
-    const path = try std.fmt.bufPrint(&buff, "{s}/{s}", .{directory,folder});
-    const subdir = std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| {
-        return err;
-    };
-    var it = subdir.iterate();
-    while (try it.next(io)) |entry| {
-        switch (entry.kind) {
-            .file => {
-                const start = std.mem.startsWith(u8, entry.name, "pTAN");
-                const end = std.mem.endsWith(u8, entry.name, ".fa");
-                const length = (entry.name.len == 10);
-                if (start and end and length) {
-                    return true;
-                    }
-            },
-            else => { continue; },
-        }
-    }    
-    return false;
+    const proc1 = try std.process.run(
+        allocator,
+        io,
+        .{ .argv = &argv1 },
+    );
+    defer allocator.free(proc1.stdout);
+    defer allocator.free(proc1.stderr);
+    switch (proc1.term) {
+        .exited => |eCode| {
+            if (eCode != 0) {
+                std.debug.print(
+                    "P1 did not exit cleanly with code {}\n",
+                    .{eCode},
+                );
+            } else {
+//                std.debug.print("{s}\n", .{proc1.stdout});
+                var hits = std.mem.tokenizeSequence(u8, proc1.stdout, "<Hit>");
+                _ = hits.next(); // discard header info
+                const hit = hits.next(); // look at the top hit
+                if (hit) |value| {
+                    std.debug.print("{s}", .{value});
+                    std.debug.print("----------------------------------------\n", .{});
+                } else {
+                    std.debug.print("No hits found.\n", .{});
+                }
+
+                }
+
+        },
+        .signal => {
+            std.debug.print("P1 was killed by a signal.\n", .{});
+        },
+        .stopped => {
+            std.debug.print("P1 was stopped.\n", .{});
+        },
+        .unknown => {
+            std.debug.print("P1 terminated: unknown status.\n", .{});
+        },
+        
+    }
 }
